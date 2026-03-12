@@ -1,11 +1,8 @@
 #include "grid.h"
 #include "gapi.h"
+#include "gapi_builtin_shaders.h"
 #include "gapi_types.h"
 #include "utility_macros.h"
-
-static const char line_shader[] = {
-#embed "../build/shaders/line.spv"
-};
 
 GapiResult grid_pipeline_create(GapiPipelineHandle *out_pipeline_handle) {
 
@@ -17,8 +14,8 @@ GapiResult grid_pipeline_create(GapiPipelineHandle *out_pipeline_handle) {
         },
     };
     GapiPipelineCreateInfo create_info = {
-        .shader_code = line_shader,
-        .shader_code_size = sizeof line_shader,
+        .shader_code = gapi_builtin_line_shader,
+        .shader_code_size = gapi_builtin_line_shader_size,
         .alpha_blending_mode = GAPI_ALPHA_BLENDING_BLEND,
         .layout_item_count = COUNT(layout_items),
         .layout_items = layout_items,
