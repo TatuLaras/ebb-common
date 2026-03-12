@@ -20,7 +20,6 @@
 VEC(GapiObject, GapiObjectBuf)
 VEC(GapiMesh, GapiMeshBuf)
 VEC(GapiTexture, GapiTextureBuf)
-VEC(GapiRectTexture, GapiRectTextureBuf)
 VEC(GapiPipeline, GapiPipelineBuf)
 VEC(GapiFont, GapiFontBuf)
 VEC(GapiUniformBuffer, GapiUniformBufferBuf)
@@ -66,7 +65,6 @@ static VkFormat depth_format = 0;
 static GapiObjectBuf objects = {0};
 static GapiMeshBuf meshes = {0};
 static GapiTextureBuf textures = {0};
-static GapiRectTextureBuf rect_textures = {0};
 static GapiPipelineBuf pipelines = {0};
 static GapiFontBuf fonts = {0};
 static GapiUniformBufferBuf uniform_buffers = {0};
@@ -289,7 +287,13 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
 
     // Create a "null" texture
     GapiTextureHandle handle;
-    gapi_texture_reserve(0, &handle);
+    uint32_t white = UINT32_MAX;
+    Image image = {
+        .width = 1,
+        .height = 1,
+        .pixels = &white,
+    };
+    gapi_texture_upload(&image, 0, &handle);
 
     return GAPI_SUCCESS;
 }
@@ -712,13 +716,9 @@ GapiResult gapi_render_begin(GapiCamera *camera) {
     return GAPI_SUCCESS;
 }
 
-void gapi_clear(Color *clear_color) {
+void gapi_clear(vec4 *clear_color) {
 
     VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
-    VkClearColorValue clear_value = {0};
-
-    if (clear_color != NULL)
-        clear_value = (VkClearColorValue){.float32 = {0.0, 0.0, 0.0, 1.0}};
 
     VkClearAttachment attachments[] = {
         {
@@ -729,9 +729,12 @@ void gapi_clear(Color *clear_color) {
         {
 
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .clearValue = {clear_value},
         },
     };
+
+    if (clear_color != NULL)
+        memcpy(&attachments[1].clearValue, clear_color, sizeof(vec4));
+
     VkClearRect rect = {
         .rect = {.extent = swap_extent},
         .baseArrayLayer = 0,
@@ -892,7 +895,8 @@ void gapi_rect_draw_ex(Rect2D rect,
                        vec4 color,
                        GapiTextureHandle texture_handle,
                        GapiRect texture_slice,
-                       float z_index) {
+                       float z_index,
+                       int draw_as_circle) {
 
     VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
 
@@ -914,6 +918,7 @@ void gapi_rect_draw_ex(Rect2D rect,
         .positioning = {pos_x, pos_y, scale_x, scale_y},
         .texture_slice = texture_slice,
         .z_index = z_index,
+        .is_circle = draw_as_circle,
     };
     memcpy(push_data.color, color, sizeof(vec4));
 
@@ -939,7 +944,30 @@ void gapi_rect_draw(Rect2D rect, vec4 color, GapiTextureHandle texture_handle) {
                       color,
                       texture_handle,
                       (GapiRect){0.0, 0.0, 1.0, 1.0},
-                      auto_z_index);
+                      auto_z_index,
+                      0);
+    auto_z_index -= AUTO_Z_INCREMENT;
+}
+
+void gapi_circle_draw_ex(Rect2D rect,
+                         vec4 color,
+                         GapiTextureHandle texture_handle,
+                         float z_index) {
+
+    gapi_rect_draw_ex(rect,
+                      color,
+                      texture_handle,
+                      (GapiRect){0.0, 0.0, 1.0, 1.0},
+                      z_index,
+                      1);
+    auto_z_index -= AUTO_Z_INCREMENT;
+}
+
+void gapi_circle_draw(Rect2D rect,
+                      vec4 color,
+                      GapiTextureHandle texture_handle) {
+
+    gapi_circle_draw_ex(rect, color, texture_handle, auto_z_index);
     auto_z_index -= AUTO_Z_INCREMENT;
 }
 
@@ -971,7 +999,8 @@ draw_char(char c, GapiFont *font, vec4 color, uint32_t *pen_x, uint32_t pos_y) {
                       color,
                       font->atlas_texture,
                       texture_slice,
-                      auto_z_index);
+                      auto_z_index,
+                      0);
 
     *pen_x += info.advance;
 }
