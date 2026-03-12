@@ -22,7 +22,7 @@ typedef enum {
 FldResult fld_load_file(const char *filepath,
                         uint32_t face_index,
                         uint32_t character_size,
-                        Image *out_font_atlas);
+                        Font *out_font);
 
 const char *fld_strerror(FldResult result);
 
