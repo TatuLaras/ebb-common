@@ -1,21 +1,29 @@
 #include "gapi.h"
 #include "cglm/cglm.h"
+#include "gapi_builtin_shaders.h"
 #include "gapi_low_level.h"
 #include "gapi_types.h"
+#include "types.h"
 #include "utility_macros.h"
+#include <GLFW/glfw3.h>
+#include <assert.h>
 #include <stdint.h>
 #include <time.h>
+#include <unistd.h>
 #define VEC_INLINE_FUNCTIONS
 #include "vec.h"
 #include <vulkan/vulkan_core.h>
 
 #define DEG_TO_RAD 0.01745329252
+#define AUTO_Z_INCREMENT 0.0000001
 
 VEC(GapiObject, GapiObjectBuf)
 VEC(GapiMesh, GapiMeshBuf)
 VEC(GapiTexture, GapiTextureBuf)
 VEC(GapiRectTexture, GapiRectTextureBuf)
 VEC(GapiPipeline, GapiPipelineBuf)
+VEC(GapiFont, GapiFontBuf)
+VEC(GapiUniformBuffer, GapiUniformBufferBuf)
 
 VkResult gapi_vulkan_error = VK_SUCCESS;
 
@@ -55,17 +63,17 @@ static VkDeviceMemory depth_image_memory;
 static VkImageView depth_image_view;
 static VkFormat depth_format = 0;
 
-static VkDescriptorSetLayout descriptor_set_layout = NULL;
-static VkDescriptorSetLayout rect_descriptor_set_layout = NULL;
-
 static GapiObjectBuf objects = {0};
 static GapiMeshBuf meshes = {0};
 static GapiTextureBuf textures = {0};
 static GapiRectTextureBuf rect_textures = {0};
 static GapiPipelineBuf pipelines = {0};
+static GapiFontBuf fonts = {0};
+static GapiUniformBufferBuf uniform_buffers = {0};
 
 static GapiMeshHandle rect_mesh_handle = 0;
-static GapiPipeline rect_pipeline = {0};
+static GapiPipelineHandle rect_pipeline_handle = {0};
+static float auto_z_index = 0.0;
 
 // Destroy swapchain along with its image views.
 static inline void destroy_swapchain(void) {
@@ -139,7 +147,8 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
     if (GapiObjectBuf_init(&objects) < 0 || GapiMeshBuf_init(&meshes) < 0 ||
         GapiTextureBuf_init(&textures) < 0 ||
         GapiRectTextureBuf_init(&rect_textures) < 0 ||
-        GapiPipelineBuf_init(&pipelines) < 0)
+        GapiPipelineBuf_init(&pipelines) < 0 || GapiFontBuf_init(&fonts) < 0 ||
+        GapiUniformBufferBuf_init(&uniform_buffers) < 0)
         return GAPI_SYSTEM_ERROR;
 
     PROPAGATE(gll_window_init(info->window.width,
@@ -186,33 +195,25 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
 
     PROPAGATE(create_sync_objects());
 
-    VkDescriptorSetLayoutBinding layout_bindings[] = {
-        {
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        },
-        {
-            .binding = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
+    GapiPushConstantRange push_range = {
+        .stage = GAPI_STAGE_VERTEX,
+        .size = sizeof(RectPushConstantData),
     };
-    PROPAGATE(gll_descritor_set_layout_create(device,
-                                              COUNT(layout_bindings),
-                                              layout_bindings,
-                                              &descriptor_set_layout));
-
-    VkDescriptorSetLayoutBinding rect_layout_binding = {
+    GapiDescriptorLayoutItem layout_item = {
         .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .type = GAPI_DESCRIPTOR_TEXTURE,
+        .stage = GAPI_STAGE_FRAGMENT,
     };
-    PROPAGATE(gll_descritor_set_layout_create(
-        device, 1, &rect_layout_binding, &rect_descriptor_set_layout));
+    GapiPipelineCreateInfo rect_pipeline_info = {
+        .shader_code = gapi_builtin_rect_shader,
+        .shader_code_size = gapi_builtin_rect_shader_size,
+        .layout_item_count = 1,
+        .layout_items = &layout_item,
+        .push_constant_range_count = 1,
+        .push_constant_ranges = &push_range,
+        .alpha_blending_mode = GAPI_ALPHA_BLENDING_BLEND,
+    };
+    gapi_pipeline_create(&rect_pipeline_info, &rect_pipeline_handle);
 
     // Create mesh for rectangle drawing
     Vertex rect_vertices[] = {
@@ -265,14 +266,8 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
         return GAPI_SYSTEM_ERROR;
 
     // Create a "null" texture
-    uint32_t pixel = UINT32_MAX;
-    Image image = {
-        .width = 1,
-        .height = 1,
-        .pixels = &pixel,
-    };
     GapiTextureHandle handle;
-    gapi_texture_upload(&image, &handle);
+    gapi_texture_reserve(0, &handle);
 
     return GAPI_SUCCESS;
 }
@@ -281,15 +276,14 @@ void gapi_free(void) {
 
     vkDeviceWaitIdle(device);
 
-    // Destroy objects
-    for (uint32_t i = 0; i < objects.count; i++) {
+    for (uint32_t i = 0; i < uniform_buffers.count; i++) {
         for (uint32_t j = 0; j < GAPI_MAX_FRAMES_IN_FLIGHT; j++) {
-            vkUnmapMemory(device, objects.data[i].uniform_buffer_memories[j]);
-            vkFreeMemory(
-                device, objects.data[i].uniform_buffer_memories[j], NULL);
-            vkDestroyBuffer(device, objects.data[i].uniform_buffers[j], NULL);
+            vkUnmapMemory(device, uniform_buffers.data[i].memories[j]);
+            vkFreeMemory(device, uniform_buffers.data[i].memories[j], NULL);
+            vkDestroyBuffer(device, uniform_buffers.data[i].buffers[j], NULL);
         }
     }
+
     GapiObjectBuf_free(&objects);
 
     // Destroy textures
@@ -323,12 +317,9 @@ void gapi_free(void) {
         vkDestroyPipeline(device, pipelines.data[i].pipeline, NULL);
         vkDestroyPipelineLayout(
             device, pipelines.data[i].pipeline_layout, NULL);
+        vkDestroyDescriptorSetLayout(
+            device, pipelines.data[i].descriptor_set_layout, NULL);
     }
-
-    if (rect_pipeline.pipeline != NULL)
-        vkDestroyPipeline(device, rect_pipeline.pipeline, NULL);
-    if (rect_pipeline.pipeline_layout != NULL)
-        vkDestroyPipelineLayout(device, rect_pipeline.pipeline_layout, NULL);
 
     // Swapchain
     for (uint32_t i = 0; i < swapchain_images.count; i++) {
@@ -337,13 +328,14 @@ void gapi_free(void) {
     vkDestroySwapchainKHR(device, swapchain, NULL);
 
     // Other stuff
-    vkDestroyDescriptorSetLayout(device, descriptor_set_layout, NULL);
-    vkDestroyDescriptorSetLayout(device, rect_descriptor_set_layout, NULL);
     gll_image_resources_destroy(
         device, depth_image, depth_image_memory, depth_image_view);
 
     // Device
     vkDestroyDevice(device, NULL);
+
+    vkDestroySurfaceKHR(instance, surface, NULL);
+    glfwDestroyWindow(window);
 }
 
 GapiResult gapi_pipeline_create(GapiPipelineCreateInfo *create_info,
@@ -356,12 +348,75 @@ GapiResult gapi_pipeline_create(GapiPipelineCreateInfo *create_info,
 
     GapiPipeline *pipeline = pipelines.data + pipeline_handle;
 
+    VkDescriptorSetLayoutBinding
+        layout_bindings[create_info->layout_item_count];
+
+    for (uint32_t i = 0; i < create_info->layout_item_count; i++) {
+        GapiDescriptorLayoutItem *item = create_info->layout_items + i;
+        layout_bindings[i] = (VkDescriptorSetLayoutBinding){
+            .binding = item->binding,
+            .descriptorCount = 1,
+        };
+
+        switch (item->type) {
+        case GAPI_DESCRIPTOR_UNIFORM_BUFFER:
+            layout_bindings[i].descriptorType =
+                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            break;
+        case GAPI_DESCRIPTOR_TEXTURE:
+            layout_bindings[i].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            break;
+        }
+
+        switch (item->stage) {
+        case GAPI_STAGE_VERTEX:
+            layout_bindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            break;
+        case GAPI_STAGE_FRAGMENT:
+            layout_bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            break;
+        }
+    }
+
+    VkPushConstantRange push_constants[create_info->push_constant_range_count];
+
+    if (create_info->push_constant_range_count > 0) {
+
+        for (uint32_t i = 0; i < create_info->push_constant_range_count; i++) {
+
+            GapiPushConstantRange *range =
+                create_info->push_constant_ranges + i;
+            push_constants[i] = (VkPushConstantRange){
+                .offset = range->offset,
+                .size = range->size,
+            };
+
+            switch (range->stage) {
+            case GAPI_STAGE_VERTEX:
+                push_constants[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+                break;
+            case GAPI_STAGE_FRAGMENT:
+                push_constants[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                break;
+            default:
+                assert(0);
+            }
+        }
+    }
+
+    PROPAGATE(
+        gll_descritor_set_layout_create(device,
+                                        create_info->layout_item_count,
+                                        layout_bindings,
+                                        &pipeline->descriptor_set_layout));
+
     PROPAGATE(gll_pipeline_create(device,
                                   surface_format,
-                                  descriptor_set_layout,
+                                  pipeline->descriptor_set_layout,
                                   depth_format,
-                                  0,
-                                  NULL,
+                                  create_info->push_constant_range_count,
+                                  push_constants,
                                   create_info,
                                   &pipeline->pipeline_layout,
                                   &pipeline->pipeline));
@@ -370,23 +425,11 @@ GapiResult gapi_pipeline_create(GapiPipelineCreateInfo *create_info,
     return GAPI_SUCCESS;
 }
 
-GapiResult gapi_rect_pipeline_create(GapiPipelineCreateInfo *create_info) {
+GapiResult gapi_mesh_reserve(GapiMeshHandle *out_mesh_handle) {
 
-    VkPushConstantRange push_constant_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .offset = 0,
-        .size = sizeof(RectPushConstantData),
-    };
-
-    PROPAGATE(gll_pipeline_create(device,
-                                  surface_format,
-                                  rect_descriptor_set_layout,
-                                  depth_format,
-                                  1,
-                                  &push_constant_range,
-                                  create_info,
-                                  &rect_pipeline.pipeline_layout,
-                                  &rect_pipeline.pipeline));
+    GapiMesh new_mesh = {0};
+    *out_mesh_handle = meshes.count;
+    SYS_ERR(GapiMeshBuf_append(&meshes, &new_mesh));
 
     return GAPI_SUCCESS;
 }
@@ -424,13 +467,17 @@ GapiResult gapi_mesh_update(GapiMeshHandle mesh_handle, Mesh *mesh) {
 
 GapiResult gapi_mesh_upload(Mesh *mesh, GapiMeshHandle *out_mesh_handle) {
 
-    GapiMesh new_mesh = {0};
-    GapiMeshHandle handle = meshes.count;
-    SYS_ERR(GapiMeshBuf_append(&meshes, &new_mesh));
+    PROPAGATE(gapi_mesh_reserve(out_mesh_handle));
+    PROPAGATE(gapi_mesh_update(*out_mesh_handle, mesh));
+    return GAPI_SUCCESS;
+}
 
-    PROPAGATE(gapi_mesh_update(handle, mesh));
+GapiResult gapi_texture_reserve(uint32_t binding,
+                                GapiTextureHandle *out_texture_handle) {
 
-    *out_mesh_handle = handle;
+    GapiTexture texture = {.binding = binding};
+    *out_texture_handle = textures.count;
+    SYS_ERR(GapiTextureBuf_append(&textures, &texture));
     return GAPI_SUCCESS;
 }
 
@@ -449,95 +496,97 @@ GapiResult gapi_texture_update(GapiTextureHandle texture_handle, Image *image) {
                                  image->pixels,
                                  image->width,
                                  image->height,
+                                 texture->binding,
                                  texture));
-
     return GAPI_SUCCESS;
 }
 
 GapiResult gapi_texture_upload(Image *image,
+                               uint32_t binding,
                                GapiTextureHandle *out_texture_handle) {
 
-    GapiTexture texture = {0};
-    GapiTextureHandle handle = textures.count;
-    SYS_ERR(GapiTextureBuf_append(&textures, &texture));
-
-    PROPAGATE(gapi_texture_update(handle, image));
-
-    *out_texture_handle = handle;
+    PROPAGATE(gapi_texture_reserve(binding, out_texture_handle));
+    PROPAGATE(gapi_texture_update(*out_texture_handle, image));
     return GAPI_SUCCESS;
 }
 
-// GapiResult
-// gapi_rect_texture_create(GapiTextureHandle texture_handle,
-//                          GapiRectTextureHandle *out_rect_texture_handle) {
-//
-//     GapiTexture *texture = GapiTextureBuf_get(&textures, texture_handle);
-//     if (texture == NULL)
-//         return GAPI_INVALID_HANDLE;
-//
-//     VkDescriptorSet descriptor_set;
-//     VkDescriptorSetAllocateInfo alloc_info = {
-//         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-//         .descriptorPool = descriptor_pool,
-//         .descriptorSetCount = 1,
-//         .pSetLayouts = &rect_descriptor_set_layout,
-//     };
-//     VK_ERR(vkAllocateDescriptorSets(device, &alloc_info, &descriptor_set));
-//
-//     VkDescriptorImageInfo image_info = {
-//         .sampler = texture->sampler,
-//         .imageView = texture->image_view,
-//         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-//     };
-//
-//     VkWriteDescriptorSet descriptor_writes[] = {
-//         {
-//             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-//             .dstSet = descriptor_set,
-//             .dstBinding = 0,
-//             .dstArrayElement = 0,
-//             .descriptorCount = 1,
-//             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-//             .pImageInfo = &image_info,
-//         },
-//     };
-//
-//     vkUpdateDescriptorSets(
-//         device, COUNT(descriptor_writes), descriptor_writes, 0, NULL);
-//
-//     GapiRectTexture rect_texture = {
-//         .descriptor_set = descriptor_set,
-//     };
-//     *out_rect_texture_handle = rect_textures.count;
-//     SYS_ERR(GapiRectTextureBuf_append(&rect_textures, &rect_texture));
-//
-//     return GAPI_SUCCESS;
-// }
+GapiResult gapi_font_upload(Font *font, GapiFontHandle *out_font_handle) {
 
-GapiResult gapi_object_create(GapiMeshHandle mesh_handle,
-                              GapiTextureHandle texture_handle,
-                              GapiObjectHandle *out_object_handle) {
+    GapiFont new_font = {.metadata = font->metadata};
+    GAPI_ERR(gapi_texture_upload(&font->atlas, 0, &new_font.atlas_texture));
+    GapiFontHandle handle = fonts.count;
+    SYS_ERR(GapiFontBuf_append(&fonts, &new_font));
+
+    *out_font_handle = handle;
+    return GAPI_SUCCESS;
+}
+
+GapiResult gapi_uniform_buffer_create(uint32_t size,
+                                      uint32_t binding,
+                                      GapiUniformBufferHandle *out_handle) {
+
+    GapiUniformBuffer uniform_buffer = {.size = size, .binding = binding};
+
+    for (uint32_t i = 0; i < COUNT(uniform_buffer.buffers); i++) {
+        PROPAGATE(gll_uniform_buffer_create(device,
+                                            physical_device,
+                                            size,
+                                            uniform_buffer.buffers + i,
+                                            uniform_buffer.memories + i,
+                                            uniform_buffer.mappings + i));
+    }
+
+    *out_handle = uniform_buffers.count;
+    GapiUniformBufferBuf_append(&uniform_buffers, &uniform_buffer);
+
+    return GAPI_SUCCESS;
+}
+
+GapiResult
+gapi_object_create_ex(GapiMeshHandle mesh_handle,
+                      uint32_t texture_count,
+                      GapiTextureHandle *texture_handles,
+                      uint32_t uniform_buffer_count,
+                      GapiUniformBufferHandle *uniform_buffer_handles,
+                      GapiObjectHandle *out_object_handle) {
+
+    if (texture_count > GAPI_OBJECT_MAX_TEXTURES)
+        return GAPI_TOO_MANY_TEXTURES;
+    if (uniform_buffer_count > GAPI_OBJECT_MAX_UNIFORM_BUFFERS)
+        return GAPI_TOO_MANY_UNIFORM_BUFFERS;
 
     GapiObject new_object = {
         .mesh_handle = mesh_handle,
-        .texture_handle = texture_handle,
+        .texture_count = texture_count,
+        .uniform_buffer_count = uniform_buffer_count,
     };
-    GapiObjectHandle handle = objects.count;
+
+    memcpy(new_object.texture_handles,
+           texture_handles,
+           texture_count * sizeof(GapiTextureHandle));
+    memcpy(new_object.uniform_buffer_handles,
+           uniform_buffer_handles,
+           uniform_buffer_count * sizeof(GapiUniformBufferHandle));
+
+    *out_object_handle = objects.count;
     SYS_ERR(GapiObjectBuf_append(&objects, &new_object));
+    return GAPI_SUCCESS;
+}
 
-    GapiObject *object = objects.data + handle;
+GapiResult gapi_object_create(GapiMeshHandle mesh_handle,
+                              GapiTextureHandle texture_handle,
+                              uint32_t ubo_binding,
+                              GapiObjectHandle *out_object_handle) {
 
-    for (uint32_t i = 0; i < GAPI_MAX_FRAMES_IN_FLIGHT; i++) {
-        PROPAGATE(
-            gll_uniform_buffer_create(device,
-                                      physical_device,
-                                      sizeof(GapiUBO),
-                                      object->uniform_buffers + i,
-                                      object->uniform_buffer_memories + i,
-                                      object->uniform_buffer_mappings + i));
-    }
+    GapiUniformBufferHandle ubo;
+    PROPAGATE(gapi_uniform_buffer_create(sizeof(GapiUBO), ubo_binding, &ubo));
+    PROPAGATE(gapi_object_create_ex(mesh_handle,
+                                    texture_handle == 0 ? 0 : 1,
+                                    &texture_handle,
+                                    1,
+                                    &ubo,
+                                    out_object_handle));
 
-    *out_object_handle = handle;
     return GAPI_SUCCESS;
 }
 
@@ -546,6 +595,8 @@ VkResult gapi_get_vulkan_error(void) {
 }
 
 GapiResult gapi_render_begin(GapiCamera *camera) {
+
+    auto_z_index = 0.99;
 
     if (camera != NULL)
         scene_camera = *camera;
@@ -605,25 +656,20 @@ GapiResult gapi_render_begin(GapiCamera *camera) {
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-    // Black
-    VkClearValue clear_color = {.color = {.float32 = {0, 0, 0, 1}}};
-    VkClearValue clear_depth = {.depthStencil = {1, 0}};
-
     VkRenderingAttachmentInfo color_att_info = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = swapchain_images.image_views[image_index],
         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue = clear_color,
     };
+
     VkRenderingAttachmentInfo depth_att_info = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = depth_image_view,
         .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .clearValue = clear_depth,
     };
     VkRenderingInfo rendering_info = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
@@ -642,6 +688,36 @@ GapiResult gapi_render_begin(GapiCamera *camera) {
     vkCmdSetScissor(cmd_buf, 0, 1, &scissor);
 
     return GAPI_SUCCESS;
+}
+
+void gapi_clear(Color *clear_color) {
+
+    VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
+    VkClearColorValue clear_value = {0};
+
+    if (clear_color != NULL)
+        clear_value = (VkClearColorValue){.float32 = {0.0, 0.0, 0.0, 1.0}};
+
+    VkClearAttachment attachments[] = {
+        {
+
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .clearValue = {.depthStencil = {1, 0}},
+        },
+        {
+
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .clearValue = {clear_value},
+        },
+    };
+    VkClearRect rect = {
+        .rect = {.extent = swap_extent},
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+    };
+
+    vkCmdClearAttachments(
+        cmd_buf, clear_color == NULL ? 1 : 2, attachments, 1, &rect);
 }
 
 GapiResult gapi_render_end(void) {
@@ -711,8 +787,51 @@ GapiResult gapi_render_end(void) {
     return GAPI_SUCCESS;
 }
 
+void gapi_object_draw_ex(GapiObjectHandle object_handle,
+                         GapiPipelineHandle pipeline_handle) {
+
+    VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
+
+    GapiPipeline *pipeline = pipelines.data + pipeline_handle;
+
+    vkCmdBindPipeline(
+        cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
+
+    GapiObject *object = GapiObjectBuf_get(&objects, object_handle);
+    assert(object != NULL);
+    GapiMesh *mesh = meshes.data + object->mesh_handle;
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd_buf, 0, 1, &mesh->vertex_buffer, &offset);
+    vkCmdBindIndexBuffer(cmd_buf, mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    GapiTexture *object_textures[object->texture_count];
+    for (uint32_t i = 0; i < object->texture_count; i++) {
+        object_textures[i] = textures.data + object->texture_handles[i];
+    }
+
+    GapiUniformBuffer *object_bufs[object->uniform_buffer_count];
+    for (uint32_t i = 0; i < object->uniform_buffer_count; i++) {
+        object_bufs[i] =
+            uniform_buffers.data + object->uniform_buffer_handles[i];
+    }
+
+    gll_push_descriptor_set(cmd_buf,
+                            pipeline->pipeline_layout,
+                            object->texture_count,
+                            object_textures,
+                            object->uniform_buffer_count,
+                            object_bufs,
+                            frame_index);
+
+    vkCmdDrawIndexed(cmd_buf, mesh->index_count, 1, 0, 0, 0);
+}
+
 static inline void
 update_uniform_buffer(GapiObject *object, mat4 *matrix, vec4 color_tint) {
+
+    if (object->uniform_buffer_count == 0)
+        return;
 
     GapiUBO ubo_data = {
         .view = GLM_MAT4_IDENTITY_INIT,
@@ -732,9 +851,9 @@ update_uniform_buffer(GapiObject *object, mat4 *matrix, vec4 color_tint) {
                     ubo_data.projection);
     ubo_data.projection[1][1] *= -1;
 
-    memcpy(object->uniform_buffer_mappings[frame_index],
-           &ubo_data,
-           sizeof ubo_data);
+    GapiUniformBuffer *ubo =
+        uniform_buffers.data + object->uniform_buffer_handles[0];
+    memcpy(ubo->mappings[frame_index], &ubo_data, sizeof ubo_data);
 }
 
 void gapi_object_draw(GapiObjectHandle object_handle,
@@ -742,48 +861,25 @@ void gapi_object_draw(GapiObjectHandle object_handle,
                       mat4 *matrix,
                       vec4 color_tint) {
 
+    GapiObject *obj = objects.data + object_handle;
+    update_uniform_buffer(obj, matrix, color_tint);
+    gapi_object_draw_ex(object_handle, pipeline_handle);
+}
+
+void gapi_rect_draw_ex(Rect2D rect,
+                       vec4 color,
+                       GapiTextureHandle texture_handle,
+                       GapiRect texture_slice,
+                       float z_index) {
+
     VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
 
-    GapiPipeline *pipeline = pipelines.data + pipeline_handle;
+    GapiMesh *mesh = meshes.data + rect_mesh_handle;
+    GapiPipeline *pipeline = pipelines.data + rect_pipeline_handle;
 
     vkCmdBindPipeline(
         cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 
-    GapiObject *object = GapiObjectBuf_get(&objects, object_handle);
-    assert(object != NULL);
-    GapiMesh *mesh = meshes.data + object->mesh_handle;
-
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd_buf, 0, 1, &mesh->vertex_buffer, &offset);
-    vkCmdBindIndexBuffer(cmd_buf, mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-    update_uniform_buffer(object, matrix, color_tint);
-
-    GapiTexture *texture =
-        GapiTextureBuf_get(&textures, object->texture_handle);
-    if (texture == NULL)
-        return;
-
-    gll_push_descriptor_set(cmd_buf,
-                            pipeline->pipeline_layout,
-                            texture,
-                            object->uniform_buffers[frame_index]);
-
-    vkCmdDrawIndexed(cmd_buf, mesh->index_count, 1, 0, 0, 0);
-}
-
-void gapi_text_draw(Rect2D rect,
-                    vec4 color,
-                    GapiRectTextureHandle rect_texture_handle,
-                    vec4 texture_slice) {
-
-    VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
-
-    GapiMesh *mesh = meshes.data + rect_mesh_handle;
-
-    vkCmdBindPipeline(
-        cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, rect_pipeline.pipeline);
-
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd_buf, 0, 1, &mesh->vertex_buffer, &offset);
     vkCmdBindIndexBuffer(cmd_buf, mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -794,59 +890,13 @@ void gapi_text_draw(Rect2D rect,
     float pos_y = (float)rect.y / swap_extent.height;
     RectPushConstantData push_data = {
         .positioning = {pos_x, pos_y, scale_x, scale_y},
-    };
-    memcpy(push_data.color, color, sizeof(vec4));
-    memcpy(push_data.texture_slice, texture_slice, sizeof(vec4));
-
-    vkCmdPushConstants(cmd_buf,
-                       rect_pipeline.pipeline_layout,
-                       VK_SHADER_STAGE_VERTEX_BIT,
-                       0,
-                       sizeof push_data,
-                       &push_data);
-
-    GapiRectTexture *texture =
-        GapiRectTextureBuf_get(&rect_textures, rect_texture_handle);
-    if (texture == NULL)
-        return;
-
-    vkCmdBindDescriptorSets(cmd_buf,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            rect_pipeline.pipeline_layout,
-                            0,
-                            1,
-                            &texture->descriptor_set,
-                            0,
-                            NULL);
-
-    vkCmdDrawIndexed(cmd_buf, mesh->index_count, 1, 0, 0, 0);
-}
-
-void gapi_rect_draw(Rect2D rect, vec4 color, GapiTextureHandle texture_handle) {
-
-    VkCommandBuffer cmd_buf = drawing_command_buffers[frame_index];
-
-    GapiMesh *mesh = meshes.data + rect_mesh_handle;
-
-    vkCmdBindPipeline(
-        cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, rect_pipeline.pipeline);
-
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd_buf, 0, 1, &mesh->vertex_buffer, &offset);
-    vkCmdBindIndexBuffer(cmd_buf, mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-    float scale_x = (float)rect.width / swap_extent.width;
-    float scale_y = (float)rect.height / swap_extent.height;
-    float pos_x = (float)rect.x / swap_extent.width;
-    float pos_y = (float)rect.y / swap_extent.height;
-    RectPushConstantData push_data = {
-        .positioning = {pos_x, pos_y, scale_x, scale_y},
-        .texture_slice = {0.0, 0.0, 1.0, 1.0},
+        .texture_slice = texture_slice,
+        .z_index = z_index,
     };
     memcpy(push_data.color, color, sizeof(vec4));
 
     vkCmdPushConstants(cmd_buf,
-                       rect_pipeline.pipeline_layout,
+                       pipeline->pipeline_layout,
                        VK_SHADER_STAGE_VERTEX_BIT,
                        0,
                        sizeof push_data,
@@ -856,20 +906,145 @@ void gapi_rect_draw(Rect2D rect, vec4 color, GapiTextureHandle texture_handle) {
     if (texture == NULL)
         return;
 
-    gll_push_rect_descriptor_set(
-        cmd_buf, rect_pipeline.pipeline_layout, texture);
+    gll_push_rect_descriptor_set(cmd_buf, pipeline->pipeline_layout, texture);
 
     vkCmdDrawIndexed(cmd_buf, mesh->index_count, 1, 0, 0, 0);
 }
 
-int gapi_window_should_close(double *out_delta_time) {
+void gapi_rect_draw(Rect2D rect, vec4 color, GapiTextureHandle texture_handle) {
 
-    if (out_delta_time != NULL) {
-        static double last_time = 0;
-        float current_time = glfwGetTime();
-        *out_delta_time = current_time - last_time;
-        last_time = current_time;
+    gapi_rect_draw_ex(rect,
+                      color,
+                      texture_handle,
+                      (GapiRect){0.0, 0.0, 1.0, 1.0},
+                      auto_z_index);
+    auto_z_index -= AUTO_Z_INCREMENT;
+}
+
+static inline void
+draw_char(char c, GapiFont *font, vec4 color, uint32_t *pen_x, uint32_t pos_y) {
+
+    FontMetadata *metadata = &font->metadata;
+
+    if (c < metadata->first_char || c > metadata->last_char)
+        return;
+
+    GlyphInfo info = metadata->glyph_infos[c - metadata->first_char];
+
+    float dim = metadata->atlas_dimension;
+
+    float width = info.x1 - info.x0;
+    float height = info.y1 - info.y0;
+
+    GapiRect texture_slice = {
+        .x = info.x0 / dim,
+        .y = info.y0 / dim,
+        .width = width / dim,
+        .height = height / dim,
+    };
+    gapi_rect_draw_ex((Rect2D){.x = *pen_x + info.offset_left,
+                               .y = pos_y + info.offset_top,
+                               .width = width,
+                               .height = height},
+                      color,
+                      font->atlas_texture,
+                      texture_slice,
+                      auto_z_index);
+
+    *pen_x += info.advance;
+}
+
+void gapi_text_draw(char *text,
+                    uint32_t x,
+                    uint32_t y,
+                    GapiFontHandle font_handle,
+                    vec4 color) {
+
+    GapiFont *font = fonts.data + font_handle;
+    uint32_t pen_x = x;
+    uint32_t pen_y = y;
+
+    for (uint32_t i = 0; text[i]; i++) {
+        draw_char(text[i], font, color, &pen_x, pen_y);
     }
+
+    auto_z_index -= AUTO_Z_INCREMENT;
+}
+
+void gapi_text_draw_wrapped(char *text,
+                            uint32_t x,
+                            uint32_t y,
+                            GapiFontHandle font_handle,
+                            vec4 color,
+                            uint32_t wrap_width,
+                            int break_word) {
+
+    GapiFont *font = fonts.data + font_handle;
+
+    uint32_t text_length = strlen(text);
+    char line[text_length + 1];
+    memset(line, 0, text_length + 1);
+
+    uint32_t pen_y = y;
+    uint32_t width = 0;
+    uint32_t word_width = 0;
+    uint32_t last_allowed = 0;
+    uint32_t base = 0;
+    GlyphInfo *info;
+
+    for (uint32_t i = 0; i < text_length; i++) {
+        uint32_t char_index = text[i] - font->metadata.first_char;
+        info = font->metadata.glyph_infos + char_index;
+        width += info->advance;
+        word_width += info->advance;
+
+        if (width >= wrap_width) {
+            uint32_t n_chars = last_allowed - base + 1;
+            memcpy(line, text + base, n_chars);
+            line[n_chars] = 0;
+
+            gapi_text_draw(line, x, pen_y, font_handle, color);
+            pen_y += font->metadata.glyph_cell_size;
+            base = last_allowed + 1;
+            if (break_word)
+                width = 0;
+            else
+                width = word_width;
+            continue;
+        }
+
+        if (text[i] == ' ')
+            word_width = 0;
+        if (break_word || text[i] == ' ' || i == text_length - 1)
+            last_allowed = i;
+    }
+
+    last_allowed = text_length - 1;
+    uint32_t n_chars = last_allowed - base + 1;
+    memcpy(line, text + base, n_chars);
+    line[n_chars] = 0;
+    gapi_text_draw(line, x, pen_y, font_handle, color);
+
+    auto_z_index -= AUTO_Z_INCREMENT;
+}
+
+int gapi_window_should_close(uint32_t max_framerate, double *out_delta_time) {
+    static double last_time = 0;
+    double current_time = glfwGetTime();
+    double delta_time = current_time - last_time;
+
+    if (max_framerate != UINT32_MAX) {
+        double min_delta_time = 1.0 / max_framerate;
+        double wait_for = min_delta_time - delta_time;
+        if (wait_for > 0)
+            usleep(wait_for * 1000000);
+        delta_time = glfwGetTime() - last_time;
+    }
+
+    last_time = current_time;
+
+    if (out_delta_time != NULL)
+        *out_delta_time = delta_time;
 
     glfwPollEvents();
     return glfwWindowShouldClose(window);
@@ -902,8 +1077,9 @@ const char *gapi_strerror(GapiResult result) {
         return "A required Vulkan feature is not supported";
     case GAPI_TOO_MANY_LAYOUT_BINDINGS:
         return "Too many layout bindings";
+    case GAPI_TOO_MANY_TEXTURES:
+        return "Texture count is too big";
+    case GAPI_TOO_MANY_UNIFORM_BUFFERS:
+        return "Uniform buffer count is too big";
     }
-
-    // Theres a compiler warning I want to get rid of:
-    return "";
 }

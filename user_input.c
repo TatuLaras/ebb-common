@@ -1,5 +1,6 @@
 #include "user_input.h"
 
+#include <GLFW/glfw3.h>
 #include <string.h>
 
 typedef struct {
@@ -94,6 +95,10 @@ int uin_is_key_pressed(UinKey key) {
 int uin_is_key_released(UinKey key) {
     return key_released[key];
 }
+
+// char uin_get_key(void) {
+//     glfwGetKey(GLFWwindow *window, int key)
+// }
 
 void uin_set_cursor(UinCursorMode mode) {
     glfwSetInputMode(glfw_window, GLFW_CURSOR, mode);

@@ -3,11 +3,14 @@
 
 #include "cglm/types-struct.h"
 #include "cglm/types.h"
+#include "types.h"
 #include <stdint.h>
 #include <vulkan/vulkan_core.h>
 
 #define GAPI_MAX_FRAMES_IN_FLIGHT 2
 #define GAPI_MAX_LAYOUT_BINDINGS 32
+#define GAPI_OBJECT_MAX_TEXTURES 8
+#define GAPI_OBJECT_MAX_UNIFORM_BUFFERS 8
 
 typedef enum {
     GAPI_SUCCESS = 0,
@@ -19,6 +22,8 @@ typedef enum {
     GAPI_VULKAN_FEATURE_UNSUPPORTED,
     GAPI_INVALID_HANDLE,
     GAPI_TOO_MANY_LAYOUT_BINDINGS,
+    GAPI_TOO_MANY_TEXTURES,
+    GAPI_TOO_MANY_UNIFORM_BUFFERS,
 } GapiResult;
 
 typedef enum {
@@ -40,8 +45,10 @@ typedef enum {
 typedef uint32_t GapiMeshHandle;
 typedef uint32_t GapiObjectHandle;
 typedef uint32_t GapiTextureHandle;
+typedef uint32_t GapiFontHandle;
 typedef uint32_t GapiRectTextureHandle;
 typedef uint32_t GapiPipelineHandle;
+typedef uint32_t GapiUniformBufferHandle;
 
 typedef struct {
     uint32_t width;
@@ -50,9 +57,35 @@ typedef struct {
     GapiWindowFlags flags;
 } GapiWindowInitInfo;
 
+typedef enum {
+    GAPI_DESCRIPTOR_UNIFORM_BUFFER,
+    GAPI_DESCRIPTOR_TEXTURE,
+} GapiDescriptorType;
+
+typedef enum {
+    GAPI_STAGE_VERTEX,
+    GAPI_STAGE_FRAGMENT,
+} GapiShaderStage;
+
+typedef struct {
+    uint32_t binding;
+    GapiDescriptorType type;
+    GapiShaderStage stage;
+} GapiDescriptorLayoutItem;
+
+typedef struct {
+    GapiShaderStage stage;
+    uint32_t offset;
+    uint32_t size;
+} GapiPushConstantRange;
+
 typedef struct {
     const char *shader_code;
     uint32_t shader_code_size;
+    uint32_t layout_item_count;
+    GapiDescriptorLayoutItem *layout_items;
+    uint32_t push_constant_range_count;
+    GapiPushConstantRange *push_constant_ranges;
     GapiAlphaBlending alpha_blending_mode;
     GapiTopology topology;
 } GapiPipelineCreateInfo;
@@ -60,6 +93,7 @@ typedef struct {
 typedef struct {
     VkPipeline pipeline;
     VkPipelineLayout pipeline_layout;
+    VkDescriptorSetLayout descriptor_set_layout;
 } GapiPipeline;
 
 typedef struct {
@@ -80,6 +114,7 @@ typedef struct {
     VkDeviceMemory image_memory;
     VkImageView image_view;
     VkSampler sampler;
+    uint32_t binding;
 } GapiTexture;
 
 typedef struct {
@@ -102,19 +137,39 @@ typedef struct {
 } GapiMesh;
 
 typedef struct {
+    VkBuffer buffers[GAPI_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory memories[GAPI_MAX_FRAMES_IN_FLIGHT];
+    void *mappings[GAPI_MAX_FRAMES_IN_FLIGHT];
+    uint32_t size;
+    uint32_t binding;
+} GapiUniformBuffer;
+
+typedef struct {
     GapiMeshHandle mesh_handle;
-    GapiTextureHandle texture_handle;
-    VkBuffer uniform_buffers[GAPI_MAX_FRAMES_IN_FLIGHT];
-    VkDeviceMemory uniform_buffer_memories[GAPI_MAX_FRAMES_IN_FLIGHT];
-    void *uniform_buffer_mappings[GAPI_MAX_FRAMES_IN_FLIGHT];
+    uint32_t texture_count;
+    GapiTextureHandle texture_handles[GAPI_OBJECT_MAX_TEXTURES];
+    uint32_t uniform_buffer_count;
+    GapiUniformBufferHandle
+        uniform_buffer_handles[GAPI_OBJECT_MAX_UNIFORM_BUFFERS];
 } GapiObject;
 
 typedef struct {
-    // x y width height
-    vec4 positioning;
+    FontMetadata metadata;
+    GapiTextureHandle atlas_texture;
+} GapiFont;
+
+typedef struct {
+    float x;
+    float y;
+    float width;
+    float height;
+} GapiRect;
+
+typedef struct {
+    GapiRect positioning;
     vec4 color;
-    // x y scale_x scale_y
-    vec4 texture_slice;
+    GapiRect texture_slice;
+    float z_index;
 } RectPushConstantData;
 
 #endif

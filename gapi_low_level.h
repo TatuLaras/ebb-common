@@ -132,6 +132,7 @@ GapiResult gll_texture_create(VkDevice device,
                               uint32_t *pixels,
                               uint32_t width,
                               uint32_t height,
+                              uint32_t binding,
                               GapiTexture *out_texture);
 
 void gll_texture_destroy(VkDevice device, GapiTexture *texture);
@@ -159,8 +160,11 @@ void gll_transition_image_layout(VkCommandBuffer command_buffer,
 
 void gll_push_descriptor_set(VkCommandBuffer command_buffer,
                              VkPipelineLayout pipeline_layout,
-                             GapiTexture *texture,
-                             VkBuffer uniform_buffer);
+                             uint32_t texture_count,
+                             GapiTexture **textures,
+                             uint32_t uniform_buffer_count,
+                             GapiUniformBuffer **uniform_buffers,
+                             uint32_t frame_index);
 void gll_push_rect_descriptor_set(VkCommandBuffer command_buffer,
                                   VkPipelineLayout pipeline_layout,
                                   GapiTexture *texture);

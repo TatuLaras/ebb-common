@@ -10,6 +10,10 @@
 #define LOG_PREFIX ""
 #endif
 
+#ifndef STR
+#define STR(x) #x
+#endif
+
 #ifdef LOG_DISABLE_ERROR
 #define ERROR(...)
 #else

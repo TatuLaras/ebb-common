@@ -1,3 +1,4 @@
+//  TODO: Make text drawing more performant.
 #ifndef _GRAPHICS_API
 #define _GRAPHICS_API
 
@@ -23,7 +24,7 @@
     if ((result) < 0)                                                          \
         return GAPI_SYSTEM_ERROR;
 
-#define STR(x) #x
+#define TO_SRGB(x) pow((x), (2.2))
 
 #ifdef DEBUG
 #define VK_ERR(result)                                                         \
@@ -40,7 +41,7 @@
     {                                                                          \
         VkResult __res = result;                                               \
         if (__res != VK_SUCCESS) {                                             \
-            vulkan_error = __res;                                              \
+            gapi_vulkan_error = __res;                                         \
             return GAPI_VULKAN_ERROR;                                          \
         }                                                                      \
     }
@@ -74,16 +75,34 @@ GapiResult gapi_mesh_upload(Mesh *mesh, GapiMeshHandle *out_mesh_handle);
 // Upload texture data to use for drawing. Opaque handle will be written to
 // `out_texture_handle`.
 GapiResult gapi_texture_upload(Image *image,
+                               uint32_t binding,
                                GapiTextureHandle *out_texture_handle);
+
+// Upload a font for later use in gapi_text_draw(). `binding` is a descriptor
+// binding for the location in the shader where the atlas texture will be used
+// from.
+GapiResult gapi_font_upload(Font *font, GapiFontHandle *out_font_handle);
+
 GapiResult
 gapi_rect_texture_create(GapiTextureHandle texture_handle,
                          GapiRectTextureHandle *out_rect_texture_handle);
+
+// Reserve an empty texture handle.
+GapiResult gapi_texture_reserve(uint32_t binding,
+                                GapiTextureHandle *out_texture_handle);
+// Reserve an empty mesh handle.
+GapiResult gapi_mesh_reserve(GapiMeshHandle *out_mesh_handle);
 
 // Update existing mesh object `mesh_handle` to have mesh data in `mesh`.
 GapiResult gapi_mesh_update(GapiMeshHandle mesh_handle, Mesh *mesh);
 // Update existing texture object `texture_handle` to have texture data in
 // `pixels`.
+
 GapiResult gapi_texture_update(GapiTextureHandle texture_handle, Image *image);
+
+GapiResult gapi_uniform_buffer_create(uint32_t size,
+                                      uint32_t binding,
+                                      GapiUniformBufferHandle *out_handle);
 
 // Create a drawable 3D object from mesh and texture handles obtained from
 // gapi_mesh_upload() and gapi_texture_upload() respectively. Opaque handle will
@@ -93,7 +112,16 @@ GapiResult gapi_texture_update(GapiTextureHandle texture_handle, Image *image);
 // have to have a separate object.
 GapiResult gapi_object_create(GapiMeshHandle mesh_handle,
                               GapiTextureHandle texture_handle,
+                              uint32_t ubo_binding,
                               GapiObjectHandle *out_object_handle);
+GapiResult
+gapi_object_create_ex(GapiMeshHandle mesh_handle,
+                      uint32_t texture_count,
+                      GapiTextureHandle *texture_handles,
+                      uint32_t uniform_buffer_count,
+                      GapiUniformBufferHandle *uniform_buffer_handles,
+                      GapiObjectHandle *out_object_handle);
+
 // Create an object with a 2D rectangle mesh. Drawable as normal with
 // gapi_object_draw() but usually used with gapi_rect_draw().
 GapiResult gapi_rect_create(GapiTextureHandle texture_handle,
@@ -101,25 +129,52 @@ GapiResult gapi_rect_create(GapiTextureHandle texture_handle,
 
 GapiResult gapi_pipeline_create(GapiPipelineCreateInfo *create_info,
                                 GapiPipelineHandle *out_pipeline_handle);
-// Create pipeline used for gapi_rect_draw;
-GapiResult gapi_rect_pipeline_create(GapiPipelineCreateInfo *create_info);
 
 // Polls for GLFW events and returns whether or not the window should close.
 // Returns frame delta-time into `out_delta_time`.
-int gapi_window_should_close(double *out_delta_time);
+int gapi_window_should_close(uint32_t max_framerate, double *out_delta_time);
 // Call before any gapi*_draw functions. Optionally set `camera` for 3D
 // rendering.
 GapiResult gapi_render_begin(GapiCamera *camera);
 // Call after any gapi*_draw functions.
 GapiResult gapi_render_end(void);
+// Clear color and depth attachments. If `clear_color` is NULL, only the depth
+// attachment will be cleared.
+void gapi_clear(Color *clear_color);
 
 // Draw a 3D object (`object_handle`) created with gapi_object_create() using
-// model matrix `matrix`.
+// model matrix `matrix`. For object drawing, the _ex function has fever
+// parameters. With the _ex function you will have to update the uniform buffers
+// yourself, and with this one a perspective transformation is written into the
+// first uniform buffer of the object, assuming the data to be in the same
+// format as struct GabiUBO. If you created the object with
+// gapi_object_create(), this is the case.
 void gapi_object_draw(GapiObjectHandle object_handle,
-                      GapiPipelineHandle shader_handle,
+                      GapiPipelineHandle pipeline_handle,
                       mat4 *matrix,
                       vec4 color_tint);
+void gapi_object_draw_ex(GapiObjectHandle object_handle,
+                         GapiPipelineHandle pipeline_handle);
 void gapi_rect_draw(Rect2D rect, vec4 color, GapiTextureHandle texture_handle);
+void gapi_rect_draw_ex(Rect2D rect,
+                       vec4 color,
+                       GapiTextureHandle texture_handle,
+                       GapiRect texture_slice,
+                       float z_index);
+
+//  NOTE: Requires a rectangle drawing pipeline to be created with
+//  gapi_rect_pipeline_create().
+void gapi_text_draw(
+    char *text, uint32_t x, uint32_t y, GapiFontHandle font_handle, vec4 color);
+//  NOTE: Requires a rectangle drawing pipeline to be created with
+//  gapi_rect_pipeline_create().
+void gapi_text_draw_wrapped(char *text,
+                            uint32_t x,
+                            uint32_t y,
+                            GapiFontHandle font_handle,
+                            vec4 color,
+                            uint32_t wrap_width,
+                            int break_word);
 
 void gapi_get_window_size(uint32_t *out_width, uint32_t *out_height);
 

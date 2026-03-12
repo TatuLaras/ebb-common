@@ -1,5 +1,7 @@
 #include "grid.h"
+#include "gapi.h"
 #include "gapi_types.h"
+#include "utility_macros.h"
 
 static const char line_shader[] = {
 #embed "../build/shaders/line.spv"
@@ -7,13 +9,21 @@ static const char line_shader[] = {
 
 GapiResult grid_pipeline_create(GapiPipelineHandle *out_pipeline_handle) {
 
+    GapiDescriptorLayoutItem layout_items[] = {
+        {
+            .binding = 0,
+            .type = GAPI_DESCRIPTOR_UNIFORM_BUFFER,
+            .stage = GAPI_STAGE_VERTEX,
+        },
+    };
     GapiPipelineCreateInfo create_info = {
         .shader_code = line_shader,
         .shader_code_size = sizeof line_shader,
         .alpha_blending_mode = GAPI_ALPHA_BLENDING_BLEND,
+        .layout_item_count = COUNT(layout_items),
+        .layout_items = layout_items,
         .topology = GAPI_TOPOLOGY_LINES,
     };
-
     GAPI_ERR(gapi_pipeline_create(&create_info, out_pipeline_handle));
     return GAPI_SUCCESS;
 }
@@ -62,7 +72,7 @@ GapiResult grid_object_create(uint32_t size,
     GapiMeshHandle mesh_handle;
     GAPI_ERR(gapi_mesh_upload(&mesh, &mesh_handle));
 
-    GAPI_ERR(gapi_object_create(mesh_handle, 0, out_object_handle));
+    GAPI_ERR(gapi_object_create(mesh_handle, 0, 0, out_object_handle));
 
     return GAPI_SUCCESS;
 }
