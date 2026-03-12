@@ -57,6 +57,8 @@
 
 #define SWAPCHAIN_MAX_IMAGES 16
 
+#define GAPI_PIPELINE_DEFAULT 0
+
 #define GAPI_COLOR_WHITE (vec4){1.0, 1.0, 1.0, 1.0}
 #define GAPI_COLOR_BLACK (vec4){0.0, 0.0, 0.0, 1.0}
 #define GAPI_COLOR_RED (vec4){1.0, 0.0, 0.0, 1.0}

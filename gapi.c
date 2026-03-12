@@ -195,6 +195,28 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
 
     PROPAGATE(create_sync_objects());
 
+    GapiDescriptorLayoutItem layout_items[] = {
+        {
+            .binding = 0,
+            .type = GAPI_DESCRIPTOR_UNIFORM_BUFFER,
+            .stage = GAPI_STAGE_VERTEX,
+        },
+        {
+            .binding = 1,
+            .type = GAPI_DESCRIPTOR_TEXTURE,
+            .stage = GAPI_STAGE_FRAGMENT,
+        },
+    };
+    GapiPipelineHandle default_pipeline;
+    GapiPipelineCreateInfo pipeline_create_info = {
+        .shader_code = gapi_builtin_3d_shader,
+        .shader_code_size = gapi_builtin_3d_shader_size,
+        .alpha_blending_mode = GAPI_ALPHA_BLENDING_BLEND,
+        .layout_item_count = COUNT(layout_items),
+        .layout_items = layout_items,
+    };
+    GAPI_ERR(gapi_pipeline_create(&pipeline_create_info, &default_pipeline));
+
     GapiPushConstantRange push_range = {
         .stage = GAPI_STAGE_VERTEX,
         .size = sizeof(RectPushConstantData),
