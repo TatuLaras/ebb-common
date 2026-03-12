@@ -1,5 +1,4 @@
 #include "user_input.h"
-
 #include <GLFW/glfw3.h>
 #include <string.h>
 
@@ -96,16 +95,19 @@ int uin_is_key_released(UinKey key) {
     return key_released[key];
 }
 
-// char uin_get_key(void) {
-//     glfwGetKey(GLFWwindow *window, int key)
-// }
-
 void uin_set_cursor(UinCursorMode mode) {
     glfwSetInputMode(glfw_window, GLFW_CURSOR, mode);
 }
 
 void uin_get_mouse_pos(double *out_x, double *out_y) {
     glfwGetCursorPos(glfw_window, out_x, out_y);
+}
+
+int uin_is_mouse_inside_rect(Rect2D rect) {
+    double x, y;
+    uin_get_mouse_pos(&x, &y);
+    return x >= rect.x && x <= rect.x + rect.width && y >= rect.y &&
+           y <= rect.y + rect.height;
 }
 
 void uin_get_mouse_delta(double *out_x, double *out_y) {

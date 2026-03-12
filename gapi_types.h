@@ -170,6 +170,7 @@ typedef struct {
     vec4 color;
     GapiRect texture_slice;
     float z_index;
+    int is_circle;
 } RectPushConstantData;
 
 #endif

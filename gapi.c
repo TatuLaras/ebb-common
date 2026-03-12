@@ -144,7 +144,6 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
 
     if (GapiObjectBuf_init(&objects) < 0 || GapiMeshBuf_init(&meshes) < 0 ||
         GapiTextureBuf_init(&textures) < 0 ||
-        GapiRectTextureBuf_init(&rect_textures) < 0 ||
         GapiPipelineBuf_init(&pipelines) < 0 || GapiFontBuf_init(&fonts) < 0 ||
         GapiUniformBufferBuf_init(&uniform_buffers) < 0)
         return GAPI_SYSTEM_ERROR;

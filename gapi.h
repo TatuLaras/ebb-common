@@ -142,7 +142,7 @@ GapiResult gapi_render_begin(GapiCamera *camera);
 GapiResult gapi_render_end(void);
 // Clear color and depth attachments. If `clear_color` is NULL, only the depth
 // attachment will be cleared.
-void gapi_clear(Color *clear_color);
+void gapi_clear(vec4 *clear_color);
 
 // Draw a 3D object (`object_handle`) created with gapi_object_create() using
 // model matrix `matrix`. For object drawing, the _ex function has fever
@@ -162,7 +162,15 @@ void gapi_rect_draw_ex(Rect2D rect,
                        vec4 color,
                        GapiTextureHandle texture_handle,
                        GapiRect texture_slice,
-                       float z_index);
+                       float z_index,
+                       int draw_as_circle);
+void gapi_circle_draw(Rect2D rect,
+                      vec4 color,
+                      GapiTextureHandle texture_handle);
+void gapi_circle_draw_ex(Rect2D rect,
+                         vec4 color,
+                         GapiTextureHandle texture_handle,
+                         float z_index);
 
 //  NOTE: Requires a rectangle drawing pipeline to be created with
 //  gapi_rect_pipeline_create().

@@ -1,6 +1,7 @@
 #ifndef _USER_INPUT
 #define _USER_INPUT
 
+#include "types.h"
 #include <GLFW/glfw3.h>
 
 typedef enum {
@@ -167,6 +168,7 @@ int uin_is_key_released(UinKey key);
 void uin_set_cursor(UinCursorMode mode);
 void uin_get_mouse_pos(double *out_x, double *out_y);
 void uin_get_mouse_delta(double *out_x, double *out_y);
+int uin_is_mouse_inside_rect(Rect2D rect);
 
 float uin_get_scroll(void);
 float uin_get_scroll_horizontal(void);
