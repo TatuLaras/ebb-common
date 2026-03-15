@@ -71,5 +71,10 @@ GapiResult grid_object_create(uint32_t size,
 
     GAPI_ERR(gapi_object_create(mesh_handle, 0, 0, out_object_handle));
 
+    GapiUniformBufferHandle ubo;
+    GAPI_ERR(gapi_uniform_buffer_create(sizeof(GapiUBO), 0, &ubo));
+    GAPI_ERR(gapi_object_create_ex(
+        mesh_handle, 0, NULL, 1, &ubo, out_object_handle));
+
     return GAPI_SUCCESS;
 }

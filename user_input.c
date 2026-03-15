@@ -1,6 +1,10 @@
 #include "user_input.h"
+#define VEC_INLINE_FUNCTIONS
+#include "vec.h"
 #include <GLFW/glfw3.h>
 #include <string.h>
+
+VEC(UinCharFn, CallbackBuf)
 
 typedef struct {
     double x;
@@ -9,6 +13,8 @@ typedef struct {
 
 static GLFWwindow *glfw_window = NULL;
 
+static CallbackBuf character_callbacks = {0};
+
 static uint8_t mouse_button_down[UIN_MOUSE_BUTTON_LAST] = {0};
 static uint8_t mouse_button_pressed[UIN_MOUSE_BUTTON_LAST] = {0};
 static uint8_t mouse_button_released[UIN_MOUSE_BUTTON_LAST] = {0};
@@ -16,6 +22,7 @@ static uint8_t mouse_button_released[UIN_MOUSE_BUTTON_LAST] = {0};
 static uint8_t key_down[UIN_KEY_LAST] = {0};
 static uint8_t key_pressed[UIN_KEY_LAST] = {0};
 static uint8_t key_released[UIN_KEY_LAST] = {0};
+static uint8_t key_repeated[UIN_KEY_LAST] = {0};
 
 static MousePos current_mouse = {0};
 static MousePos previous_mouse = {0};
@@ -40,10 +47,21 @@ key_callback(GLFWwindow *_window, int key, int scancode, int action, int mods) {
     (void)mods;
     (void)scancode;
 
-    int is_down = action == GLFW_PRESS;
-    key_down[key] = is_down;
-    key_pressed[key] = is_down;
-    key_released[key] = !is_down;
+    switch (action) {
+    case GLFW_RELEASE:
+        key_down[key] = 0;
+        key_pressed[key] = 0;
+        key_released[key] = 1;
+        break;
+    case GLFW_PRESS:
+        key_down[key] = 1;
+        key_pressed[key] = 1;
+        key_released[key] = 0;
+        break;
+    case GLFW_REPEAT:
+        key_repeated[key] = 1;
+        break;
+    }
 }
 
 static void scroll_callback(GLFWwindow *_window, double x, double y) {
@@ -54,11 +72,18 @@ static void scroll_callback(GLFWwindow *_window, double x, double y) {
     scroll_y = y;
 }
 
+static void character_callback(GLFWwindow *window, unsigned int codepoint) {
+    for (uint32_t i = 0; i < character_callbacks.count; i++)
+        character_callbacks.data[i](codepoint);
+}
+
 void uin_init(GLFWwindow *window) {
 
     glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetKeyCallback(window, key_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetCharCallback(window, character_callback);
+    CallbackBuf_init(&character_callbacks);
     glfw_window = window;
 }
 
@@ -68,6 +93,7 @@ void uin_refresh(void) {
     memset(mouse_button_released, 0, sizeof mouse_button_released);
     memset(key_pressed, 0, sizeof key_pressed);
     memset(key_released, 0, sizeof key_released);
+    memset(key_repeated, 0, sizeof key_repeated);
 
     scroll_y = 0;
     scroll_x = 0;
@@ -93,6 +119,9 @@ int uin_is_key_pressed(UinKey key) {
 }
 int uin_is_key_released(UinKey key) {
     return key_released[key];
+}
+int uin_is_key_repeated(UinKey key) {
+    return key_repeated[key];
 }
 
 void uin_set_cursor(UinCursorMode mode) {
@@ -121,4 +150,8 @@ float uin_get_scroll(void) {
 
 float uin_get_scroll_horizontal(void) {
     return scroll_x;
+}
+
+int uin_new_char_callback(UinCharFn callback) {
+    return CallbackBuf_append(&character_callbacks, &callback);
 }

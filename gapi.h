@@ -97,10 +97,18 @@ GapiResult gapi_mesh_reserve(GapiMeshHandle *out_mesh_handle);
 
 // Update existing mesh object `mesh_handle` to have mesh data in `mesh`.
 GapiResult gapi_mesh_update(GapiMeshHandle mesh_handle, Mesh *mesh);
+GapiResult gapi_object_mesh_update(GapiObjectHandle object_handle, Mesh *mesh);
+
 // Update existing texture object `texture_handle` to have texture data in
 // `pixels`.
 
 GapiResult gapi_texture_update(GapiTextureHandle texture_handle, Image *image);
+
+GapiResult gapi_object_set_texture(GapiObjectHandle object_handle,
+                                   GapiTextureHandle texture_handle,
+                                   uint32_t texture_index);
+GapiResult gapi_object_remove_texture(GapiObjectHandle object_handle,
+                                      uint32_t texture_index);
 
 GapiResult gapi_uniform_buffer_create(uint32_t size,
                                       uint32_t binding,
@@ -187,6 +195,7 @@ void gapi_text_draw_wrapped(char *text,
                             int break_word);
 
 void gapi_get_window_size(uint32_t *out_width, uint32_t *out_height);
+float gapi_get_aspect_ratio(void);
 
 // Get the result of the last failed Vulkan API call.
 VkResult gapi_get_vulkan_error(void);

@@ -1,7 +1,10 @@
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_LEFT_HANDED
 #include "gapi.h"
 #include "cglm/cglm.h"
 #include "gapi_builtin_shaders.h"
 #include "gapi_low_level.h"
+#include "gapi_math.h"
 #include "gapi_types.h"
 #include "types.h"
 #include "utility_macros.h"
@@ -72,6 +75,8 @@ static GapiUniformBufferBuf uniform_buffers = {0};
 static GapiMeshHandle rect_mesh_handle = 0;
 static GapiPipelineHandle rect_pipeline_handle = {0};
 static float auto_z_index = 0.0;
+
+GapiTextureHandle null_texture;
 
 // Destroy swapchain along with its image views.
 static inline void destroy_swapchain(void) {
@@ -293,6 +298,7 @@ GapiResult gapi_init(GapiInitInfo *info, GLFWwindow **out_window) {
         .pixels = &white,
     };
     gapi_texture_upload(&image, 0, &handle);
+    gapi_texture_upload(&image, 1, &null_texture);
 
     return GAPI_SUCCESS;
 }
@@ -490,6 +496,16 @@ GapiResult gapi_mesh_update(GapiMeshHandle mesh_handle, Mesh *mesh) {
     return GAPI_SUCCESS;
 }
 
+GapiResult gapi_object_mesh_update(GapiObjectHandle object_handle, Mesh *mesh) {
+
+    GapiObject *object = GapiObjectBuf_get(&objects, object_handle);
+    if (object == NULL)
+        return GAPI_INVALID_HANDLE;
+
+    PROPAGATE(gapi_mesh_update(object->mesh_handle, mesh));
+    return GAPI_SUCCESS;
+}
+
 GapiResult gapi_mesh_upload(Mesh *mesh, GapiMeshHandle *out_mesh_handle) {
 
     PROPAGATE(gapi_mesh_reserve(out_mesh_handle));
@@ -603,15 +619,37 @@ GapiResult gapi_object_create(GapiMeshHandle mesh_handle,
                               uint32_t ubo_binding,
                               GapiObjectHandle *out_object_handle) {
 
+    if (texture_handle == 0)
+        texture_handle = null_texture;
+
     GapiUniformBufferHandle ubo;
     PROPAGATE(gapi_uniform_buffer_create(sizeof(GapiUBO), ubo_binding, &ubo));
-    PROPAGATE(gapi_object_create_ex(mesh_handle,
-                                    texture_handle == 0 ? 0 : 1,
-                                    &texture_handle,
-                                    1,
-                                    &ubo,
-                                    out_object_handle));
+    PROPAGATE(gapi_object_create_ex(
+        mesh_handle, 1, &texture_handle, 1, &ubo, out_object_handle));
 
+    return GAPI_SUCCESS;
+}
+
+GapiResult gapi_object_set_texture(GapiObjectHandle object_handle,
+                                   GapiTextureHandle texture_handle,
+                                   uint32_t texture_index) {
+
+    GapiObject *object = GapiObjectBuf_get(&objects, object_handle);
+    if (object == NULL)
+        return GAPI_INVALID_HANDLE;
+
+    object->texture_handles[texture_index] = texture_handle;
+    return GAPI_SUCCESS;
+}
+
+GapiResult gapi_object_remove_texture(GapiObjectHandle object_handle,
+                                      uint32_t texture_index) {
+
+    GapiObject *object = GapiObjectBuf_get(&objects, object_handle);
+    if (object == NULL)
+        return GAPI_INVALID_HANDLE;
+
+    object->texture_handles[texture_index] = null_texture;
     return GAPI_SUCCESS;
 }
 
@@ -848,6 +886,8 @@ void gapi_object_draw_ex(GapiObjectHandle object_handle,
                             object_bufs,
                             frame_index);
 
+    textures.data->binding = 0;
+
     vkCmdDrawIndexed(cmd_buf, mesh->index_count, 1, 0, 0, 0);
 }
 
@@ -857,23 +897,14 @@ update_uniform_buffer(GapiObject *object, mat4 *matrix, vec4 color_tint) {
     if (object->uniform_buffer_count == 0)
         return;
 
-    GapiUBO ubo_data = {
-        .view = GLM_MAT4_IDENTITY_INIT,
-        .projection = GLM_MAT4_IDENTITY_INIT,
-    };
+    GapiUBO ubo_data = {0};
     memcpy(ubo_data.model, matrix, sizeof(mat4));
     memcpy(ubo_data.color_tint, color_tint, sizeof(vec4));
 
-    float aspect_ratio = (float)swap_extent.width / swap_extent.height;
-
-    glm_lookat(
-        scene_camera.pos, scene_camera.target, scene_camera.up, ubo_data.view);
-    glm_perspective(DEG_TO_RAD * scene_camera.fov_degrees,
-                    aspect_ratio,
-                    scene_camera.near_plane,
-                    scene_camera.far_plane,
-                    ubo_data.projection);
-    ubo_data.projection[1][1] *= -1;
+    gm_view_projection(&scene_camera,
+                       gapi_get_aspect_ratio(),
+                       &ubo_data.view,
+                       &ubo_data.projection);
 
     GapiUniformBuffer *ubo =
         uniform_buffers.data + object->uniform_buffer_handles[0];
@@ -1103,6 +1134,10 @@ int gapi_window_should_close(uint32_t max_framerate, double *out_delta_time) {
 void gapi_get_window_size(uint32_t *out_width, uint32_t *out_height) {
     *out_width = swap_extent.width;
     *out_height = swap_extent.height;
+}
+
+float gapi_get_aspect_ratio(void) {
+    return (float)swap_extent.width / swap_extent.height;
 }
 
 const char *gapi_strerror(GapiResult result) {

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define FONT_ATLAS_DIMENSION_CHARS 10
+#define MAX_NAME 128
 
 typedef struct {
     vec3s pos;
@@ -64,5 +65,15 @@ typedef struct {
     uint8_t g;
     uint8_t a;
 } Color;
+
+typedef struct {
+    vec3 origin;
+    vec3 direction;
+} Ray;
+
+typedef struct {
+    vec3 center;
+    vec3 normal;
+} Plane;
 
 #endif

@@ -150,6 +150,8 @@ typedef enum {
     UIN_CURSOR_CAPTURED = GLFW_CURSOR_CAPTURED,
 } UinCursorMode;
 
+typedef void (*UinCharFn)(char c);
+
 // User input init
 void uin_init(GLFWwindow *window);
 
@@ -164,10 +166,12 @@ int uin_is_mouse_button_released(UinMouseButton button);
 int uin_is_key_down(UinKey key);
 int uin_is_key_pressed(UinKey key);
 int uin_is_key_released(UinKey key);
+int uin_is_key_repeated(UinKey key);
 
 void uin_set_cursor(UinCursorMode mode);
 void uin_get_mouse_pos(double *out_x, double *out_y);
 void uin_get_mouse_delta(double *out_x, double *out_y);
+int uin_new_char_callback(UinCharFn callback);
 int uin_is_mouse_inside_rect(Rect2D rect);
 
 float uin_get_scroll(void);
