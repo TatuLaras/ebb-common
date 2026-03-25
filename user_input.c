@@ -24,6 +24,8 @@ static uint8_t key_pressed[UIN_KEY_LAST] = {0};
 static uint8_t key_released[UIN_KEY_LAST] = {0};
 static uint8_t key_repeated[UIN_KEY_LAST] = {0};
 
+static UinKey last_pressed = UIN_KEY_NULL;
+
 static MousePos current_mouse = {0};
 static MousePos previous_mouse = {0};
 
@@ -57,6 +59,7 @@ key_callback(GLFWwindow *_window, int key, int scancode, int action, int mods) {
         key_down[key] = 1;
         key_pressed[key] = 1;
         key_released[key] = 0;
+        last_pressed = key;
         break;
     case GLFW_REPEAT:
         key_repeated[key] = 1;
@@ -94,6 +97,7 @@ void uin_refresh(void) {
     memset(key_pressed, 0, sizeof key_pressed);
     memset(key_released, 0, sizeof key_released);
     memset(key_repeated, 0, sizeof key_repeated);
+    last_pressed = UIN_KEY_NULL;
 
     scroll_y = 0;
     scroll_x = 0;
@@ -116,6 +120,9 @@ int uin_is_key_down(UinKey key) {
 }
 int uin_is_key_pressed(UinKey key) {
     return key_pressed[key];
+}
+UinKey uin_get_key_pressed(void) {
+    return last_pressed;
 }
 int uin_is_key_released(UinKey key) {
     return key_released[key];

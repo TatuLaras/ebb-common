@@ -20,6 +20,7 @@ typedef enum {
 } UinMouseButton;
 
 typedef enum {
+    UIN_KEY_NULL = 0,
     UIN_KEY_SPACE = GLFW_KEY_SPACE,
     UIN_KEY_APOSTROPHE = GLFW_KEY_APOSTROPHE,
     UIN_KEY_COMMA = GLFW_KEY_COMMA,
@@ -167,6 +168,7 @@ int uin_is_key_down(UinKey key);
 int uin_is_key_pressed(UinKey key);
 int uin_is_key_released(UinKey key);
 int uin_is_key_repeated(UinKey key);
+UinKey uin_get_key_pressed(void);
 
 void uin_set_cursor(UinCursorMode mode);
 void uin_get_mouse_pos(double *out_x, double *out_y);

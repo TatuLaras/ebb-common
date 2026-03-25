@@ -78,7 +78,8 @@ typedef struct {
 // needs to be loaded from the current thread, put 0 here. In that case,
 // `on_change_callback` will be called from the current thread when the
 // firewatch_check function is called.
-void firewatch_new_file(const char *filepath, uint64_t cookie,
+void firewatch_new_file(const char *filepath,
+                        uint64_t cookie,
                         FileRefreshFunction on_change_callback,
                         int load_instantly);
 
@@ -258,7 +259,8 @@ static inline void fw_ensure_init(void) {
 #endif // !FIREWATCH_NO_RELOAD
 
 //  TODO: Be able to cancel watch
-void firewatch_new_file(const char *filepath, uint64_t cookie,
+void firewatch_new_file(const char *filepath,
+                        uint64_t cookie,
                         FileRefreshFunction on_change_callback,
                         int load_instantly) {
 #ifdef FIREWATCH_NO_RELOAD
@@ -282,8 +284,8 @@ void firewatch_new_file(const char *filepath, uint64_t cookie,
         memcpy(directory, filepath, filename_start);
 
     // Create watch
-    int wd = inotify_add_watch(fw_inotify_fd, directory,
-                               IN_CLOSE_WRITE | IN_MOVED_TO);
+    int wd = inotify_add_watch(
+        fw_inotify_fd, directory, IN_CLOSE_WRITE | IN_MOVED_TO);
     if (wd <= 0) {
         fprintf(stderr,
                 "FIREWATCH ERROR: could not begin watching changes on file %s, "

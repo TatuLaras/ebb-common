@@ -1132,8 +1132,11 @@ int gapi_window_should_close(uint32_t max_framerate, double *out_delta_time) {
 }
 
 void gapi_get_window_size(uint32_t *out_width, uint32_t *out_height) {
-    *out_width = swap_extent.width;
-    *out_height = swap_extent.height;
+
+    if (out_width != NULL)
+        *out_width = swap_extent.width;
+    if (out_height != NULL)
+        *out_height = swap_extent.height;
 }
 
 float gapi_get_aspect_ratio(void) {

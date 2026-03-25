@@ -95,3 +95,32 @@ Ray gm_screen_to_world_ray(GapiCamera *camera, float aspect_ratio, vec2 point) {
 
     return ray;
 }
+
+int gm_get_grid_cell(GapiCamera *camera,
+                     uint32_t window_width,
+                     uint32_t window_height,
+                     double mouse_x,
+                     double mouse_y,
+                     float grid_height,
+                     float grid_density,
+                     uint32_t *out_x,
+                     uint32_t *out_y) {
+
+    Ray ray = gm_screen_to_world_ray(
+        camera,
+        (float)window_width / window_height,
+        (vec2){mouse_x / window_width, mouse_y / window_height});
+
+    Plane plane = {.normal = {0, 1, 0}, .center = {0, grid_height, 0}};
+    RayHitInfo hit = {0};
+    if (!gm_ray_plane_intersect(&ray, &plane, &hit))
+        return 0;
+
+    int16_t grid_x = floorf(hit.point[0] / grid_density);
+    int16_t grid_y = floorf(hit.point[2] / grid_density);
+
+    *out_x = grid_x;
+    *out_y = grid_y;
+
+    return 1;
+}

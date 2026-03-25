@@ -15,5 +15,14 @@ void gm_view_projection(GapiCamera *camera,
                         mat4 *out_view,
                         mat4 *out_projection);
 Ray gm_screen_to_world_ray(GapiCamera *camera, float aspect_ratio, vec2 point);
+int gm_get_grid_cell(GapiCamera *camera,
+                     uint32_t window_width,
+                     uint32_t window_height,
+                     double mouse_x,
+                     double mouse_y,
+                     float grid_height,
+                     float grid_density,
+                     uint32_t *out_x,
+                     uint32_t *out_y);
 
 #endif

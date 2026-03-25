@@ -6,6 +6,7 @@
 
 #define FONT_ATLAS_DIMENSION_CHARS 10
 #define MAX_NAME 128
+#define MAX_PATH 4096
 
 typedef struct {
     vec3s pos;
